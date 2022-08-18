@@ -7,7 +7,10 @@ import lombok.NoArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.val;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import ru.mpei.fqw.client.FourierImpl;
+import ru.mpei.fqw.client.VectorF;
 import ru.mpei.fqw.utils.ComtradeToJson;
 
 import java.io.BufferedReader;
@@ -21,26 +24,37 @@ import java.util.stream.Collectors;
 @Service
 @NoArgsConstructor
 public class ComtradeService {
+    @Value("${cfgFileName}")
+    private String cfgFileName;
+    @Value("${datFileName}")
+    private String datFileName;
 
 
     public String comtradeToJSON(){
         ClassLoader classLoader = getClass().getClassLoader();
-        InputStream cfgInputStream = classLoader.getResourceAsStream("comtrade/Number start = 698 Test = 4.2.1.1 Time = 07_19_2022 13_54_51.673 RTDS.cfg");
-        InputStream datInputStream = classLoader.getResourceAsStream("comtrade/Number start = 698 Test = 4.2.1.1 Time = 07_19_2022 13_54_51.673 RTDS.dat");
+        InputStream cfgInputStream = classLoader.getResourceAsStream(cfgFileName);
+        InputStream datInputStream = classLoader.getResourceAsStream(datFileName);
         List<CfgInfo> cfgInfoList = readCfgFileFromInputStream(cfgInputStream);
         List<List<Integer>> datData = readDatFileFromInputStream(datInputStream);
         List<ComtradeToJson> comtradeList = new ArrayList<>();
         for (int i = 0; i < cfgInfoList.size(); i++) {
             ComtradeToJson comtrade = new ComtradeToJson();
             List<Double> values = new ArrayList<>();
+            List<Double> rms = new ArrayList<>();
             for (Integer datum : datData.get(i)) {
                 if (cfgInfoList.get(i).getType().equals("analog")) {
-                    values.add(datum * cfgInfoList.get(i).getK1() + cfgInfoList.get(i).getK2());
+                    FourierImpl fourier = new FourierImpl(1);
+                    VectorF vectorF = new VectorF();
+                    double val = datum * cfgInfoList.get(i).getK1() + cfgInfoList.get(i).getK2();
+                    values.add(val);
+                    fourier.process(val, vectorF);
+                    rms.add(vectorF.getMag());
                 }
             }
             comtrade.setName(cfgInfoList.get(i).getName());
             comtrade.setType(cfgInfoList.get(i).getType());
             comtrade.setValues(cfgInfoList.get(i).getType().equals("analog") ? values : datData.get(i));
+            comtrade.setRMS(rms);
             comtradeList.add(comtrade);
         }
         ObjectMapper mapper = new ObjectMapper();
@@ -52,6 +66,8 @@ public class ComtradeService {
         }
         return dataInJson;
     }
+
+
 
     @SneakyThrows
     private List<CfgInfo> readCfgFileFromInputStream(InputStream inputStream) {
@@ -123,6 +139,8 @@ public class ComtradeService {
 
         return transposedMatrix;
     }
+
+
 }
 @Data
 class CfgInfo{
