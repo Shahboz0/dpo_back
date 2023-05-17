@@ -2,15 +2,16 @@ package ru.mpei.fqw.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.SneakyThrows;
-import lombok.val;
+import lombok.*;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import ru.mpei.fqw.client.FourierImpl;
 import ru.mpei.fqw.client.VectorF;
+import ru.mpei.fqw.dto.FaultCurrentDto;
+import ru.mpei.fqw.model.FaultCurrentModel;
+import ru.mpei.fqw.repository.RepositoryIml;
 import ru.mpei.fqw.utils.ComtradeToJson;
 
 import java.io.BufferedReader;
@@ -24,31 +25,52 @@ import java.util.stream.Collectors;
 @Service
 @NoArgsConstructor
 public class ComtradeService {
+    @Autowired
+    private RepositoryIml repository;
+
     @Value("${cfgFileName}")
     private String cfgFileName;
     @Value("${datFileName}")
     private String datFileName;
+    @Value("${current}")
+    private String current;
 
-
+    public List<FaultCurrentModel> getFaultCurrentInfo(){
+        return this.repository.getFaultCurrentInfo();
+    }
     public String comtradeToJSON(){
+        ObjectMapper currentMapper = new ObjectMapper();
+        SetCurrent setCurrent = new SetCurrent();
+        try {
+            setCurrent = currentMapper.readValue(current, SetCurrent.class);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+
         ClassLoader classLoader = getClass().getClassLoader();
         InputStream cfgInputStream = classLoader.getResourceAsStream(cfgFileName);
         InputStream datInputStream = classLoader.getResourceAsStream(datFileName);
         List<CfgInfo> cfgInfoList = readCfgFileFromInputStream(cfgInputStream);
         List<List<Integer>> datData = readDatFileFromInputStream(datInputStream);
         List<ComtradeToJson> comtradeList = new ArrayList<>();
+
+        List<FaultCurrentDto> faultCurrentDtoList = new ArrayList<>();
         for (int i = 0; i < cfgInfoList.size(); i++) {
             ComtradeToJson comtrade = new ComtradeToJson();
             List<Double> values = new ArrayList<>();
             List<Double> rms = new ArrayList<>();
-            for (Integer datum : datData.get(i)) {
+            FourierImpl fourier = new FourierImpl(1);
+            VectorF vectorF = new VectorF();
+
+            for(int j = 0; j < datData.get(i).size(); j++) {
                 if (cfgInfoList.get(i).getType().equals("analog")) {
-                    FourierImpl fourier = new FourierImpl(1);
-                    VectorF vectorF = new VectorF();
-                    double val = datum * cfgInfoList.get(i).getK1() + cfgInfoList.get(i).getK2();
+                    double val = datData.get(i).get(j) * cfgInfoList.get(i).getK1() + cfgInfoList.get(i).getK2();
                     values.add(val);
                     fourier.process(val, vectorF);
                     rms.add(vectorF.getMag());
+                    if (setCurrent.getName().equals(cfgInfoList.get(i).getName()) && setCurrent.getValue() < vectorF.getMag()){
+                        faultCurrentDtoList.add(new FaultCurrentDto(setCurrent.getName(), vectorF.getMag(), j));
+                    }
                 }
             }
             comtrade.setName(cfgInfoList.get(i).getName());
@@ -56,6 +78,18 @@ public class ComtradeService {
             comtrade.setValues(cfgInfoList.get(i).getType().equals("analog") ? values : datData.get(i));
             comtrade.setRMS(rms);
             comtradeList.add(comtrade);
+        }
+
+
+        for (int i = 0; i < comtradeList.size(); i++){
+            if (comtradeList.get(i).getName().equals("Time")){
+                Integer samplingStep = (Integer) comtradeList.get(i).getValues().get(1) - (Integer) comtradeList.get(i).getValues().get(0);
+                faultCurrentDtoList.forEach(faultCurrentDto -> {
+                    faultCurrentDto.setTime((samplingStep * faultCurrentDto.getIndexOfValues()) / 1000);
+                    this.repository.save(new FaultCurrentModel(faultCurrentDto.getName(), faultCurrentDto.getValue(), faultCurrentDto.getTime(), faultCurrentDto.getIndexOfValues()));
+                });
+
+            }
         }
         ObjectMapper mapper = new ObjectMapper();
         String dataInJson = null;
@@ -72,6 +106,7 @@ public class ComtradeService {
     @SneakyThrows
     private List<CfgInfo> readCfgFileFromInputStream(InputStream inputStream) {
         List<CfgInfo> cfgInfoList = new ArrayList<>();
+        cfgInfoList.add(new CfgInfo("Time", null, null, "time"));
         BufferedReader br = new BufferedReader(new InputStreamReader(inputStream));
         String line;
         while ((line = br.readLine()) != null) {
@@ -100,7 +135,6 @@ public class ComtradeService {
         String line;
         while ((line = br.readLine()) != null) {
             val b = Arrays.stream(Arrays.stream(StringUtils.split(line, ',')).mapToInt(Integer::parseInt).toArray()).boxed().collect(Collectors.toList());
-            b.remove(0);
             b.remove(0);
             listValues.add(b);
         }
@@ -143,9 +177,17 @@ public class ComtradeService {
 
 }
 @Data
+@AllArgsConstructor
+@NoArgsConstructor
 class CfgInfo{
     private String name;
     private Double k1;
     private Double k2;
     private String type;
 }
+@Data
+class SetCurrent{
+    private String name;
+    private Double value;
+}
+

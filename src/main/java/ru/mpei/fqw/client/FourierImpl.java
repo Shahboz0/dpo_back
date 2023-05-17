@@ -4,12 +4,7 @@ import lombok.Getter;
 import lombok.Setter;
 import java.util.stream.IntStream;
 
-/**
- * @author Александр Холодов
- * @created 08.2020
- * @project VIED
- * @description Дискретное преобразование Фурье (полное)
- */
+
 public class FourierImpl {
 
     /*
